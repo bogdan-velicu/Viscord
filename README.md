@@ -7,7 +7,7 @@ Clients are not based on peer to peer connection, everything is handled trough t
 Features:
 - voice chat (using UDP packets + NAudio library for capturing microphone)
 - messages with timestamps (TCP)
-- file sharing
+- file sharing (using the REST API server written with Node.js)
 - link detection
 - servers with channels for messages / voice
 
