@@ -15,6 +15,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using static Viscord_Client.MainWindow;
 
 namespace Viscord_Client
 {
@@ -52,13 +53,13 @@ namespace Viscord_Client
                 Mouse.OverrideCursor = null;
                 return;
             }
-            string loginData = $"[login]{{$}}{username.Text}{{$}}{password.Password}";
-            MainWindow.Client.SendPacket.Send(loginData);
+            string loginData = $"{username.Text}{{$}}{password.Password}";
+            MainWindow.Client.SendPacket.Send(loginData, PacketID.Login);
             while (Response == null)
             {
                 await Task.Delay(300);
             }
-            if (Response.Contains("[login_success]"))
+            if (Response.Contains("success"))
             {
                 Mouse.OverrideCursor = null;
                 string img = Response.Split(new string[] { "{$}" }, StringSplitOptions.None)[1];
@@ -70,13 +71,18 @@ namespace Viscord_Client
                 main.Show();
                 this.Hide();
             }
-            else if (Response.Contains("[login_fail]"))
-            {
-                Mouse.OverrideCursor = null;
-                string[] res = Response.Split(new string[] { "{$}" }, StringSplitOptions.None);
-                MessageBox.Show(res[1]);
-                Response = null;
-                return;
+            else {
+                if (Response.Contains("error"))
+                {
+                    string[] res = Response.Split(new string[] { "{$}" }, StringSplitOptions.None);
+                    MessageBox.Show(res[1]);
+                    Response = null;
+                }
+                else
+                {
+                    MessageBox.Show("Unknown error");
+                    Response = null;
+                }
             }
             Mouse.OverrideCursor = null;
         }

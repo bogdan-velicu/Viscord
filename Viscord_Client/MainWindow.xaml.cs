@@ -22,6 +22,8 @@ using NAudio.Wave;
 using XamlAnimatedGif;
 using Brush = System.Windows.Media.Brush;
 using Image = System.Windows.Controls.Image;
+using System.Linq;
+using System.Media;
 
 namespace Viscord_Client
 {
@@ -84,7 +86,10 @@ namespace Viscord_Client
             {
                 try
                 {
-                    Voice.Connect(port);
+                    if (!Voice.Connected)
+                        Voice.Connect(port);
+                    else
+                        Voice.Disconnect();
                 }
                 catch { }
                 return true;
@@ -112,14 +117,31 @@ namespace Viscord_Client
                 }
             }
 
-            public void Send(string data)
+            public void Send(PacketID id)
+            {
+                try
+                {
+                    var fullPacket = new List<byte>();
+                    fullPacket.AddRange(BitConverter.GetBytes(1));
+                    fullPacket.Add((byte)id);
+
+                    _sendSocked.Send(fullPacket.ToArray());
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(ex.Message);
+                }
+            }
+
+            public void Send(string data, PacketID id = PacketID.None)
             {
                 try
                 {
                     var fullPacket = new List<byte>();
                     var unicodeData = Encoding.Unicode.GetBytes(data);
-                    int length = unicodeData.Length;
+                    int length = unicodeData.Length + 1;
                     fullPacket.AddRange(BitConverter.GetBytes(length));
+                    fullPacket.Add((byte)id);
                     fullPacket.AddRange(unicodeData);
 
                     _sendSocked.Send(fullPacket.ToArray());
@@ -172,6 +194,26 @@ namespace Viscord_Client
             }
         }
 
+        public enum PacketID
+        {
+            Login,
+            LoginResponse,
+            Register,
+            RegisterResponse,
+            VoiceConnected,
+            VoiceDisconnected,
+            VoiceStatus,
+            ConversationData,
+            ServerData,
+            UsersData,
+            UserConnected,
+            UserDisconnected,
+            Message,
+            File,
+            FileResponse,
+            None
+        }
+
         public class User
         {
             public string Name { get; set; }
@@ -217,7 +259,7 @@ namespace Viscord_Client
 
             public static void GetAllUsers()
             {
-                Client.SendPacket.Send("[getusers]");
+                Client.SendPacket.Send(PacketID.UsersData);
             }
         }
 
@@ -250,57 +292,164 @@ namespace Viscord_Client
                         _buffer = new byte[BitConverter.ToInt32(_buffer, 0)];
                         _receiveSocket.Receive(_buffer, _buffer.Length, SocketFlags.None);
 
-                        string data = Encoding.Unicode.GetString(_buffer);
+                        string data = Encoding.Unicode.GetString(_buffer.Skip(1).ToArray());
 
-                        if (data.Contains("[messagefrom]"))
+                        List<string> rows = new List<string>();
+                        string sender = "", channelName = "";
+                        User user = new User();
+
+                        switch ((PacketID)_buffer[0])
                         {
-                            string[] rows = data.Split(new string[] { "{$}" }, StringSplitOptions.None);
-                            string sender = rows[1], message = rows[2];
-                            var user = User.FindUser(sender);
-                            if (user == null)
-                            {
-                                user = new User(sender);
-                                Users.Add(user);
-                            }
-                            user.Conversation.Add(new ViscordMessage(user, sender, message, DateTime.Now.ToString("h:mm tt")));
-                            if (Window.ListBoxSelectedItem() == sender)
-                                Window.UpdateMessages(sender);
-                            Application.Current.Dispatcher.Invoke(() => {
-                                if (Window.WindowState == WindowState.Minimized)
-                                    Window.ReceiveMessageNotify(sender, message);
-                            });
+                            case PacketID.LoginResponse:
+                                Login.Response = data;
+                                break;
+
+                            case PacketID.RegisterResponse:
+                                Register.Response = data;
+                                break;
+
+                            case PacketID.FileResponse:
+                                FileResponse = data;
+                                break;
+
+                            case PacketID.Message:
+                                rows.AddRange(data.Split(new string[] { "{$}" }, StringSplitOptions.None));
+                                string message = rows[1];
+                                sender = rows[0];
+                                user = User.FindUser(sender);
+                                if (user == null)
+                                {
+                                    user = new User(sender);
+                                    Users.Add(user);
+                                }
+                                user.Conversation.Add(new ViscordMessage(user, sender, message, DateTime.Now.ToString("h:mm tt")));
+                                if (Window.ListBoxSelectedItem() == sender)
+                                    Window.UpdateMessages(sender);
+                                Application.Current.Dispatcher.Invoke(() => {
+                                    if (Window.WindowState == WindowState.Minimized)
+                                        Window.ReceiveMessageNotify(sender, message);
+                                });
+                                break;
+
+                            case PacketID.File:
+                                rows.AddRange(data.Split(new string[] { "{$}" }, StringSplitOptions.None));
+                                string filename = rows[1], file_url = rows[2];
+                                sender = rows[0];
+                                user = User.FindUser(sender);
+                                if (user == null)
+                                {
+                                    user = new User(sender);
+                                    Users.Add(user);
+                                }
+                                user.Conversation.Add(new ViscordMessage(user, sender, file_url, DateTime.Now.ToString("h:mm tt")));
+                                if (Window.ListBoxSelectedItem() == sender)
+                                    Window.UpdateMessages(sender);
+                                break;
+
+                            case PacketID.UsersData:
+                                rows.AddRange(data.Split(new string[] { "{$}" }, StringSplitOptions.None));
+                                for (int i = 0; i < rows.Count; i++)
+                                {
+                                    string[] usr = rows[i].Split(new string[] { "{#}" }, StringSplitOptions.None);
+
+                                    if (usr[0] != Client.Name)
+                                    {
+                                        var tempUsr = new User(usr[0], bool.Parse(usr[1]), usr[2]);
+                                        Users.Add(tempUsr);
+
+                                        Application.Current.Dispatcher.Invoke(() =>
+                                        {
+                                            Window.AddToUserListBox(Window.CreateUserXAML(tempUsr));
+                                        });
+                                    }
+                                }
+                                break;
+
+                            case PacketID.UserConnected:
+                                rows.AddRange(data.Split(new string[] { "{$}" }, StringSplitOptions.None));
+                                string username = rows[0], img = rows[1];
+                                foreach (var usr in Users)
+                                {
+                                    if (usr.Name == username)
+                                    {
+                                        usr.SetStatus(true);
+                                    }
+                                }
+                                Window.RefreshUsersListBox();
+                                break;
+
+                            case PacketID.UserDisconnected:
+                                username = data;
+                                foreach (var usr in Users)
+                                {
+                                    if (usr.Name == username)
+                                    {
+                                        usr.SetStatus(false);
+                                    }
+                                }
+                                Window.RefreshUsersListBox();
+                                break;
+
+                            case PacketID.ServerData:
+                                Window.FillCurrentServerData(data);
+                                Window.ClearUserListBox();
+                                Application.Current.Dispatcher.Invoke(() =>
+                                {
+                                    Window.AddToUserListBox(Window.CreateServerXAML());
+                                });
+                                break;
+
+                            case PacketID.VoiceConnected:
+                                rows.AddRange(data.Split(new string[] { "{$}" }, StringSplitOptions.None));
+                                channelName = rows[0];
+                                string userName = rows[1];
+                                int index = CurrentServer.VoiceChannels.FindIndex(x => x.Name == channelName);
+                                if (index == -1)
+                                    break;
+
+                                CurrentServer.VoiceChannels[index].AddParticipant(userName);
+
+                                if (Window.ListBoxSelectedIndex() == 0)
+                                    break;
+
+                                Window.ClearUserListBox();
+                                Application.Current.Dispatcher.Invoke(() =>
+                                {
+                                    Window.AddToUserListBox(Window.CreateServerXAML());
+                                });
+                                break;
+
+                            case PacketID.VoiceDisconnected:
+                                rows.AddRange(data.Split(new string[] { "{$}" }, StringSplitOptions.None));
+                                channelName = rows[0];
+                                string userName1 = rows[1];
+                                int index1 = CurrentServer.VoiceChannels.FindIndex(x => x.Name == channelName);
+                                if (index1 == -1)
+                                    break;
+
+                                CurrentServer.VoiceChannels[index1].RemoveParticipant(userName1);
+
+                                if (Window.ListBoxSelectedIndex() == 0)
+                                    break;
+
+                                Window.ClearUserListBox();
+                                Application.Current.Dispatcher.Invoke(() =>
+                                {
+                                    Window.AddToUserListBox(Window.CreateServerXAML());
+                                });
+                                break;
+
+                            case PacketID.ConversationData:
+                                ConversationRequest = data;
+                                break;
+
+                            default:
+                                MessageBox.Show("Received unknown packet");
+                                break;
                         }
-                        else if (data.Contains("[filefrom]"))
-                        {
-                            string[] rows = data.Split(new string[] { "{$}" }, StringSplitOptions.None);
-                            string sender = rows[1], filename = rows[2], file_url = rows[3];
-                            var user = User.FindUser(sender);
-                            if (user == null)
-                            {
-                                user = new User(sender);
-                                Users.Add(user);
-                            }
-                            user.Conversation.Add(new ViscordMessage(user, sender, file_url, DateTime.Now.ToString("h:mm tt")));
-                            if (Window.ListBoxSelectedItem() == sender)
-                                Window.UpdateMessages(sender);
-                        }
-                        else if (data.Contains("[login_"))
-                        {
-                            Login.Response = data;
-                        }
-                        else if (data.Contains("[register_"))
-                        {
-                            Register.Response = data;
-                        }
-                        else if(data.Contains("[userconv]"))
-                        {
-                            if(data == "[userconv]")
-                            {
-                                ConversationRequest = "";
-                            }
-                            else
-                                ConversationRequest = data.Substring(13);
-                        }
+
+                        StartReceiving();
+                        return;
 
                         #region Old Call Code
                         //else if(data.Contains("[callfrom]"))
@@ -352,108 +501,6 @@ namespace Viscord_Client
                         //    }
                         //}
                         #endregion
-
-                        else if(data.Contains("[serverdata]"))
-                        {
-                            Window.FillCurrentServerData(data);
-                            Window.ClearUserListBox();
-                            Application.Current.Dispatcher.Invoke(() =>
-                            {
-                                Window.AddToUserListBox(Window.CreateServerXAML());
-                            });
-                        }
-                        else if(data.Contains("[newvoice]"))
-                        {
-                            string[] rows = data.Split(new string[] { "{$}" }, StringSplitOptions.None);
-                            string channelName = rows[1];
-                            string userName = rows[2];
-                            int index = CurrentServer.VoiceChannels.FindIndex(x => x.Name == channelName);
-                            if (index == -1)
-                                return;
-
-                            CurrentServer.VoiceChannels[index].AddParticipant(userName);
-
-                            if (Window.ListBoxSelectedIndex() == 0)
-                                return;
-
-                            Window.ClearUserListBox();
-                            Application.Current.Dispatcher.Invoke(() =>
-                            {
-                                Window.AddToUserListBox(Window.CreateServerXAML());
-                            });
-                        }
-                        else if(data.Contains("[leftvoice]"))
-                        {
-                            string[] rows = data.Split(new string[] { "{$}" }, StringSplitOptions.None);
-                            string channelName = rows[1];
-                            string userName = rows[2];
-                            int index = CurrentServer.VoiceChannels.FindIndex(x => x.Name == channelName);
-                            if (index == -1)
-                                return;
-
-                            CurrentServer.VoiceChannels[index].RemoveParticipant(userName);
-
-                            if (Window.ListBoxSelectedIndex() == 0)
-                                return;
-
-                            Window.ClearUserListBox();
-                            Application.Current.Dispatcher.Invoke(() =>
-                            {
-                                Window.AddToUserListBox(Window.CreateServerXAML());
-                            });
-                        }
-                        else if (data.Contains("[allusers]"))
-                        {
-                            string[] rows = data.Split(new string[] { "{$}" }, StringSplitOptions.None);
-                            for (int i = 1; i < rows.Length; i++)
-                            {
-                                string[] usr = rows[i].Split(new string[] { "{#}" }, StringSplitOptions.None);
-                                if (usr[0] != Client.Name)
-                                {
-                                    var tempUsr = new User(usr[0], bool.Parse(usr[1]), usr[2]);
-                                    Users.Add(tempUsr);
-
-                                    Application.Current.Dispatcher.Invoke(() =>
-                                    {
-                                        Window.AddToUserListBox(Window.CreateUserXAML(tempUsr));
-                                    });
-                                }
-                            }
-                        }
-                        else if (data.Contains("[newuser]"))
-                        {
-                            string[] rows = data.Split(new string[] { "{$}" }, StringSplitOptions.None);
-                            string username = rows[1], img = rows[2];
-                            foreach(var user in Users)
-                            {
-                                if(user.Name == username)
-                                {
-                                    user.SetStatus(true);
-                                }
-                            }
-                            Window.RefreshUsersListBox();
-                        }
-                        else if (data.Contains("[fileupload]"))
-                        {
-                            string[] rows = data.Split(new string[] { "{$}" }, StringSplitOptions.None);
-                            string response = rows[1];
-                            FileResponse = response;
-                        }
-                        else if (data.Contains("[userdisconnect]"))
-                        {
-                            string[] rows = data.Split(new string[] { "{$}" }, StringSplitOptions.None);
-                            string username = rows[1];
-                            foreach(var user in Users)
-                            {
-                                if(user.Name == username)
-                                {
-                                    user.SetStatus(false);
-                                }
-                            }
-                            Window.RefreshUsersListBox();
-                        }
-
-                        StartReceiving();
                     }
                 }
                 catch (Exception ex)
@@ -496,8 +543,15 @@ namespace Viscord_Client
 
         public static void Logout()
         {
-            if (Client._socket != null && Client._socket.Connected)
+            if (Voice.Connected) // disconnect voice / udp
+            {
+                Client.SendPacket.Send($"{Client.CurrentVoice}{{$}}{Client.Name}", PacketID.VoiceDisconnected);
+                Voice.Disconnect();
+            }
+            if (Client._socket != null && Client._socket.Connected) // disconnect tcp
+            {
                 Client._socket.Disconnect(false);
+            }
             Application.Current.Shutdown();
         }
 
@@ -672,9 +726,9 @@ namespace Viscord_Client
         {
             CurrentServer.Clear();
             string[] rows = data.Split(new string[] { "{$}" }, StringSplitOptions.None);
-            if (rows[1] != "")
+            if (rows[0] != "")
             {
-                string[] vChannels = rows[1].Split(new string[] { "{#}" }, StringSplitOptions.None);
+                string[] vChannels = rows[0].Split(new string[] { "{#}" }, StringSplitOptions.None);
                 for (int i = 0; i < vChannels.Length; i++)
                 {
                     string[] users = vChannels[i].Split(new string[] { "{@}" }, StringSplitOptions.None);
@@ -692,9 +746,9 @@ namespace Viscord_Client
                     }
                 }
             }
-            if (rows[2] != "")
+            if (rows[1] != "")
             {
-                string[] tChannels = rows[2].Split(new string[] { "{#}" }, StringSplitOptions.None);
+                string[] tChannels = rows[1].Split(new string[] { "{#}" }, StringSplitOptions.None);
                 for (int j = 1; j < tChannels.Length; j++)
                 {
                     CurrentServer.TextChannels.Add(new TextChannel(tChannels[j]));
@@ -881,7 +935,8 @@ namespace Viscord_Client
             if (Client.CurrentVoice == null)
                 return;
 
-            Client.SendPacket.Send($"[leftvoice]{{$}}{Client.CurrentVoice}");
+            Voice.Disconnect();
+            Client.SendPacket.Send($"{Client.CurrentVoice}{{$}}{Client.Name}", PacketID.VoiceDisconnected);
             int i = CurrentServer.VoiceChannels.FindIndex(x => x.Name == Client.CurrentVoice);
             CurrentServer.VoiceChannels[i].RemoveParticipant(Client.Name);
 
@@ -892,7 +947,6 @@ namespace Viscord_Client
             {
                 Window.AddToUserListBox(Window.CreateServerXAML());
             });
-            Voice.Disconnect();
         }
 
         public void UpdateUsername()
@@ -1008,9 +1062,8 @@ namespace Viscord_Client
         public async Task<List<ViscordMessage>> RequestConversation(string username)
         {
             MessageBuilder mb = new MessageBuilder();
-            mb.Add("[requestconv]");
             mb.Add(username);
-            Client.SendPacket.Send(mb.Message());
+            Client.SendPacket.Send(mb.Message(), PacketID.ConversationData);
             while (ConversationRequest == null)
             {
                 await Task.Delay(200);
@@ -1230,7 +1283,7 @@ namespace Viscord_Client
                 return;
             }
 
-            Client.SendPacket.Send($"[messageto]{{$}}{username}{{$}}{messageBox.Text}");
+            Client.SendPacket.Send($"{username}{{$}}{messageBox.Text}", PacketID.Message);
 
             var user = User.FindUser(username);
             if (user == null)
@@ -1264,6 +1317,10 @@ namespace Viscord_Client
                 else if(selectedItem != null && ((ListBoxItem)selectedItem).Name.Contains("VChannel"))
                 {
                     // not safe rework code
+
+                    if(Client.CurrentVoice == (((selectedItem as ListBoxItem).Content as Grid).Children[1] as TextBlock).Text) // if already connected in pressed vc do nothing
+                        return;
+
                     int port = Int32.Parse(((ListBoxItem)selectedItem).Name.Substring(8)) + 23650;
                     if(!Connector.TryToConnectVoice(port))
                     {
@@ -1287,7 +1344,7 @@ namespace Viscord_Client
                         CurrentServer.VoiceChannels[index].AddParticipant(Client.Name);
                         Client.CurrentVoice = CurrentServer.VoiceChannels[index].Name;
 
-                        Client.SendPacket.Send($"[newvoice]{{$}}{Client.CurrentVoice}");
+                        Client.SendPacket.Send($"{Client.CurrentVoice}{{$}}{Client.Name}{{$}}{(Voice.UdpClient.Client.LocalEndPoint as IPEndPoint).Port}", PacketID.VoiceConnected);
 
                         Window.ClearUserListBox();
                         Application.Current.Dispatcher.Invoke(() =>  // lastly update UI
@@ -1317,6 +1374,7 @@ namespace Viscord_Client
             Logout();
         }
 
+        public SoundPlayer soundPlayer = null;
         private void Viscord_Loaded(object sender, RoutedEventArgs e)
         {
             User.GetAllUsers();
@@ -1325,14 +1383,14 @@ namespace Viscord_Client
             AddMessage(CreateUserStatusBar());
             border = VisualTreeHelper.GetChild(conversationList, 0) as Decorator;
             if (border != null)
-            {
                 scrollViewer = border.Child as ScrollViewer;
-            }
             timer.Tick += new EventHandler(timer_Tick);
             timer.Interval = new TimeSpan(0, 0, 1);
             newCmd.InputGestures.Add(new KeyGesture(Key.V, ModifierKeys.Control));
             messageBox.CommandBindings.Add(new CommandBinding(newCmd, PasteEventHandler));
             settings = new Settings();
+            soundPlayer = new SoundPlayer();
+            soundPlayer.Stream = Properties.Resources.pop;
             LoadAudioDevices();
             Voice.Settings = settings;
             LoadToast();
@@ -1345,12 +1403,13 @@ namespace Viscord_Client
                 var deviceInfo = WaveIn.GetCapabilities(deviceId);
                 settings.inputCombo.Items.Add(deviceInfo.ProductName);
             }
-
+            settings.inputCombo.SelectedIndex = 0;
             for (int deviceId = 0; deviceId < WaveOut.DeviceCount; deviceId++)
             {
                 var deviceInfo = WaveOut.GetCapabilities(deviceId);
                 settings.outputCombo.Items.Add(deviceInfo.ProductName);
             }
+            settings.outputCombo.SelectedIndex = 0;
         }
 
         int counter = 0;
@@ -1452,12 +1511,20 @@ namespace Viscord_Client
             }
         }
 
-        private bool mic = true;
+        public static bool Microphone = true;
         private void micBut_Click(object sender, RoutedEventArgs e)
         {
-            mic = !mic;
+            ToggleMicrophone();
+            if(!Headphones)
+                ToggleHeadphones();
+            soundPlayer.Play();
+        }
+
+        void ToggleMicrophone()
+        {
+            Microphone = !Microphone;
             string img_name = "";
-            if (mic)
+            if (Microphone)
             {
                 img_name = @"pack://application:,,,/Resources/microphone.png";
             }
@@ -1468,12 +1535,20 @@ namespace Viscord_Client
             micImg.ImageSource = new BitmapImage(new Uri(img_name, UriKind.RelativeOrAbsolute));
         }
 
-        private bool head = true;
+        public static bool Headphones = true;
         private void headBut_Click(object sender, RoutedEventArgs e)
         {
-            head = !head;
+            ToggleHeadphones();
+            if (Microphone)
+                ToggleMicrophone();
+            soundPlayer.Play();
+        }
+
+        void ToggleHeadphones()
+        {
+            Headphones = !Headphones;
             string img_name = "";
-            if (head)
+            if (Headphones)
             {
                 img_name = @"pack://application:,,,/Resources/headphones.png";
             }
@@ -1514,14 +1589,18 @@ namespace Viscord_Client
                     return;
                 }
                 file = new FileInfo(files[0]);
+                string finalName = file.Name;
 
-                Client.SendPacket.Send($"[fileto]{{$}}{username}{{$}}{file.Name}{{$}}{data.Length}");
+                if (file.Name.Contains(" ")) // replaces white spaces with underline
+                    finalName = file.Name.Replace(" ", "_");
+
+                Client.SendPacket.Send($"{username}{{$}}{finalName}{{$}}{data.Length}", PacketID.File);
                 await Task.Delay(30);
                 Client.SendPacket.Send(data);
             }
             else
             {
-                Client.SendPacket.Send($"[fileto]{{$}}{username}{{$}}temp.jpeg{{$}}{byteArray.Length}");
+                Client.SendPacket.Send($"{username}{{$}}temp.jpeg{{$}}{byteArray.Length}", PacketID.File);
                 await Task.Delay(30);
                 Client.SendPacket.Send(byteArray);
             }
@@ -1582,15 +1661,17 @@ namespace Viscord_Client
                     this.WindowState = WindowState.Minimized;
                     break;
                 case "maximizeButton":
-                    if (this.WindowState == WindowState.Normal)
+                    System.Windows.Forms.Screen screen = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point((int)this.Left, (int)this.Top));
+                    
+                    if (!isMaximised(screen))
                     {
-                        this.MaxHeight = SystemParameters.MaximumWindowTrackHeight;
                         this.WindowState = WindowState.Maximized;
-                        maximizedEarlier = true;
                     }
                     else
                     {
-                        this.WindowState = WindowState.Normal;
+                        this.Width = oldWidth;
+                        this.Height = oldHeight;
+
                         this.Top = oldTop;
                         this.Left = oldLeft;
                     }
@@ -1599,6 +1680,16 @@ namespace Viscord_Client
                     this.Close();
                     break;
             }
+        }
+
+        private bool isMaximised(System.Windows.Forms.Screen screen)
+        {
+            if(this.Width == screen.WorkingArea.Width
+                || this.Height == screen.WorkingArea.Height
+                /*&& this.Left == screen.WorkingArea.Left
+                && this.Top == screen.WorkingArea.Top*/) { return true; }
+            else
+                return false;
         }
 
         private void leaveButtons(object sender, MouseEventArgs e)
@@ -1617,25 +1708,17 @@ namespace Viscord_Client
 
             if (e.ChangedButton == MouseButton.Left && !maximizedEarlier)
             {
-                if (this.WindowState == WindowState.Maximized)
-                {
-                    var point = PointToScreen(e.MouseDevice.GetPosition(this));
-
-                    Left = point.X - (RestoreBounds.Width * 0.5);
-                    Top = point.Y;
-
-                    this.WindowState = WindowState.Normal;
-                }
                 this.DragMove();
             }
         }
 
-        private double oldTop = 300.0, oldLeft = 300.0;
+        private double oldTop = 300.0, oldLeft = 300.0,
+            oldWidth = 850.0, oldHeight = 500.0;
 
         private void CallUser(object sender, RoutedEventArgs e)
         {
             var user = ListBoxSelectedItem();
-            Client.SendPacket.Send($"[callto]{{$}}{user}");
+            //Client.SendPacket.Send($"[callto]{{$}}{user}");
         }
 
         private void usersListBox_MouseDown(object sender, MouseButtonEventArgs e)
@@ -1652,9 +1735,21 @@ namespace Viscord_Client
         public static WaveOutEvent waveOut;
         public static BufferedWaveProvider provider;
 
+        private void Viscord_LocationChanged(object sender, EventArgs e)
+        {
+            System.Windows.Forms.Screen screen = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point((int)this.Left, (int)this.Top));
+
+            if ((this.Top == screen.Bounds.Top || this.Left == screen.Bounds.Left) || isMaximised(screen))
+                return;
+
+            oldTop = this.Top;
+            oldLeft = this.Left;
+        }
+
         private void SettingsClick(object sender, RoutedEventArgs e)
         {
             settings.Show();
+            soundPlayer.Play();
         }
 
         private void serverListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1673,17 +1768,30 @@ namespace Viscord_Client
                 }
                 else
                 {
-                    Client.SendPacket.Send($"[getserver]{{$}}{selectedItem.Name}");
+                    Client.SendPacket.Send($"{selectedItem.Name}", PacketID.ServerData);
                 }
             }
         }
 
         private void Viscord_SizeChanged(object sender, SizeChangedEventArgs e)
         {
+            System.Windows.Forms.Screen screen = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point((int)this.Left, (int)this.Top));
             if(this.WindowState == WindowState.Maximized)
             {
-                oldTop = this.Top;
-                oldLeft = this.Left;
+                this.WindowState = WindowState.Normal;
+
+                maximizedEarlier = true;
+
+                this.Width = screen.WorkingArea.Width;
+                this.Height = screen.WorkingArea.Height;
+
+                this.Left = screen.WorkingArea.Left;
+                this.Top = screen.WorkingArea.Top;
+            }
+            if (!isMaximised(screen))
+            {
+                oldHeight = this.Height;
+                oldWidth = this.Width;
             }
         }
     }

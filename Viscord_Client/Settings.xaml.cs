@@ -31,15 +31,12 @@ namespace Viscord
 
         private void buttonsMouseDown(object sender, MouseButtonEventArgs e)
         {
-            MainWindow.wave = new WaveInEvent();
             int inIndex = inputCombo.SelectedIndex;
-            if(inIndex != -1)
-                MainWindow.wave.DeviceNumber = inIndex;
-            MainWindow.waveOut = new WaveOutEvent();
-            int outIndex = inputCombo.SelectedIndex;
-            if(outIndex != -1)
-                MainWindow.waveOut.DeviceNumber = outIndex;
+            int outIndex = outputCombo.SelectedIndex;
+
             this.Visibility = Visibility.Hidden;
+
+            Voice.RefreshAudioDevices(inIndex, outIndex);
         }
 
         private void leaveButtons(object sender, MouseEventArgs e)

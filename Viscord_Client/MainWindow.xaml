@@ -6,7 +6,7 @@
         xmlns:gif="https://github.com/XamlAnimatedGif/XamlAnimatedGif"
         xmlns:local="clr-namespace:Viscord_Client"
         mc:Ignorable="d"
-        Title="Viscord" AllowsTransparency="True" MinHeight="490" MinWidth="850" Height="428.5" Width="812" Closed="Viscord_Closed" Loaded="Viscord_Loaded" ResizeMode="CanResize" WindowStyle="None" Background="Transparent" SizeChanged="Viscord_SizeChanged">
+        Title="Viscord" AllowsTransparency="True" MinHeight="500" MinWidth="850" Height="428.5" Width="812" Closed="Viscord_Closed" Loaded="Viscord_Loaded" ResizeMode="CanResizeWithGrip" WindowStyle="None" Background="Transparent" SizeChanged="Viscord_SizeChanged" LocationChanged="Viscord_LocationChanged">
     <Window.Resources>
         <Style x:Key="FocusVisual">
             <Setter Property="Control.Template">

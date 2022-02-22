@@ -40,7 +40,7 @@ namespace Viscord_Autoupdater
                         Console.WriteLine("Opening client...");
                         Thread.Sleep(1000);
                         Process.Start(@"Viscord/Viscord.exe");
-                        Process.Start(@"Viscord/Viscord.exe");
+                        //Process.Start(@"Viscord/Viscord.exe");
                     }
                     return;
                 }

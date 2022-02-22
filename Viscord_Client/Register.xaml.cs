@@ -18,6 +18,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using static Viscord_Client.MainWindow;
 
 namespace Viscord_Client
 {
@@ -81,8 +82,8 @@ namespace Viscord_Client
             if (path != "")
                 img_bytes = File.ReadAllBytes(path);
 
-            string registerData = $"[register]{{$}}{username.Text}{{$}}{pass1.Password}{{$}}{img_bytes}";
-            MainWindow.Client.SendPacket.Send(registerData);
+            string registerData = $"{username.Text}{{$}}{pass1.Password}{{$}}{img_bytes}";
+            MainWindow.Client.SendPacket.Send(registerData, PacketID.Register);
             while (Response == null)
             {
                 await Task.Delay(300);

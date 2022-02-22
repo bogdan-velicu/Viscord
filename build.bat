@@ -1,0 +1,1 @@
+"C:\Program Files\7-Zip\7z.exe" a "C:\Users\zotrix\Desktop\Viscord REST Api\viscord\viscord.zip" "D:\Visual Studio Projects\Viscord\Viscord_Client\bin\Release\*"
