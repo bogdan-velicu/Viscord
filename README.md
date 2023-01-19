@@ -1,4 +1,4 @@
-Discord Ripoff written in C#
+Similar app to Discord written in C#
 
 This is an unfinished project, the code isn't polished and it's a little messy plus it's not bug free, but maybe you can use some of the tehniques for your own projects.
 
